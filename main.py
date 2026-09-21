@@ -1,4 +1,4 @@
-"""语雀组会资料下载器 V1：同步、串行、真实浏览器下载。"""
+"""语雀组会资料下载器 V2：同步、串行、真实浏览器下载与官方 Markdown 导出。"""
 import argparse
 import logging
 import sys
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
-from yuque import TREE, Document, get_document_list, library_url, load_document, safe_name, download_attachments, save_markdown
+from yuque import TREE, Document, get_document_list, library_url, load_document, safe_name, download_attachments, export_markdown
 
 ROOT = Path(__file__).resolve().parent
 
@@ -55,18 +55,18 @@ def main():
                 return 0
             selected = documents[:args.limit] if args.limit else documents
             args.output.mkdir(parents=True, exist_ok=True)
-            good = failed = downloaded = skipped = 0
+            good = failed = downloaded = skipped = exported = 0
             for index, document in enumerate(selected, 1):
                 logging.info('处理 [%d/%d] %s', index, len(selected), document.title)
                 try:
                     folder = args.output / (safe_name(document.title) + '__' + document.url.rsplit('/', 1)[-1])
                     folder.mkdir(parents=True, exist_ok=True)
                     body = load_document(page, document)
-                    html = body.inner_html()
                     new, old, errors = download_attachments(page, body, folder)
                     downloaded += new
                     skipped += old
-                    save_markdown(html, document, folder)
+                    export_markdown(page, document, folder)
+                    exported += 1
                     if errors:
                         raise RuntimeError('; '.join(errors))
                     good += 1
@@ -75,7 +75,7 @@ def main():
                     logging.error('本篇失败，继续下一篇：%s', exc)
                     with (args.output / 'failed.txt').open('a', encoding='utf-8') as stream:
                         stream.write(f'{datetime.now().isoformat(timespec="seconds")}\t{document.title}\t{document.url}\t{str(exc).replace(chr(10), " ")}\n')
-            logging.info('结束：文档成功 %d，失败 %d；附件新下载 %d，已有跳过 %d；输出 %s', good, failed, downloaded, skipped, args.output.resolve())
+            logging.info('结束：文档成功 %d，失败 %d；官方 Markdown %d；附件新下载 %d，已有跳过 %d；输出 %s', good, failed, exported, downloaded, skipped, args.output.resolve())
             return 1 if failed else 0
         finally:
             if args.connect:

@@ -3,10 +3,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit, urlunsplit
-
-from bs4 import BeautifulSoup
-from markdownify import markdownify
+from urllib.parse import urlsplit, urlunsplit
 
 LOG = logging.getLogger(__name__)
 # 2026-09-21 在 foundationml.yuque.com 的组会报告页面实际检查。
@@ -20,7 +17,10 @@ CARD = 'ne-card'
 FILE_CARD = '[data-testid="ne-card-local-doc-viewer"]'
 FILE_TITLE = '[data-testid="ne-card-local-doc-title"]'
 DOWNLOAD = '[data-testid="ne-card-local-doc-btn-download"]'
-REMOVE = 'ne-card[data-card-name="localdoc"], ' + FILE_CARD + ', iframe, script, style, button, .ne-inner-overlay-container, [data-testid="ne-card-bookmark-icon"], [ne-filler]'
+RIGHTBOARD = 'svg[data-name="Rightboard"]'
+EXPORT_MENU_TEXT = '导出...'
+MARKDOWN_ITEM = '[data-testid="fileTypeSelectorItem-markdown"]'
+FINAL_EXPORT_BUTTON = 'button.ant-btn-primary'
 
 
 @dataclass(frozen=True)
@@ -107,24 +107,52 @@ def load_document(page, document):
     raise RuntimeError('正文 DOM 长时间不稳定，未保存可能不完整的内容')
 
 
-def save_markdown(html, document, folder):
-    soup = BeautifulSoup(html, 'html.parser')
-    for element in soup.select(REMOVE):
-        element.decompose()
-    # Lake 使用 ne-p 等自定义标签；先恢复 HTML 语义，避免段落粘连。
-    for element in soup.find_all():
-        if element.name.startswith('ne-') and element.name[3:] in {'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code'}:
-            element.name = element.name[3:]
-    for element in soup.select('[href], [src]'):
-        for attr in ('href', 'src'):
-            if element.has_attr(attr):
-                element[attr] = urljoin(document.url, element[attr])
-    content = markdownify(str(soup), heading_style='ATX').replace('\u200b', '').strip()
-    title = ' '.join(document.title.split())
-    text = f'# {title}\n\n来源：{document.url}\n\n'
-    text += content + '\n' if content else '（本页除附件外无正文。）\n'
-    (folder / '说明.md').write_text(text, encoding='utf-8')
-    LOG.info('已保存说明.md（正文 %d 字符）', len(content))
+def export_markdown(page, document, folder):
+    """按语雀官方 UI 导出 Markdown，并保存为每篇的说明.md。"""
+    target = folder / '说明.md'
+    temporary = folder / '说明.md.part'
+    try:
+        rightboard = page.locator(RIGHTBOARD)
+        rightboard.first.wait_for(state='visible', timeout=30000)
+        if rightboard.count() != 1:
+            raise RuntimeError(f'右侧导出图标数量异常：{rightboard.count()}')
+        rightboard.first.click(timeout=15000)
+
+        export_menu = page.get_by_text(EXPORT_MENU_TEXT, exact=True)
+        export_menu.first.wait_for(state='visible', timeout=30000)
+        if export_menu.count() != 1:
+            raise RuntimeError(f'导出菜单数量异常：{export_menu.count()}')
+        export_menu.first.click(timeout=15000)
+
+        markdown_item = page.locator(MARKDOWN_ITEM)
+        markdown_item.first.wait_for(state='visible', timeout=30000)
+        if markdown_item.count() != 1:
+            raise RuntimeError(f'Markdown 选项数量异常：{markdown_item.count()}')
+        markdown_item.first.click(timeout=15000)
+
+        final_export = page.locator(FINAL_EXPORT_BUTTON, has_text='导出')
+        final_export.first.wait_for(state='visible', timeout=30000)
+        if final_export.count() != 1:
+            raise RuntimeError(f'最终导出按钮数量异常：{final_export.count()}')
+
+        with page.expect_download(timeout=120000) as event:
+            final_export.first.click(timeout=15000)
+        download = event.value
+        suggested_name = download.suggested_filename
+        if Path(suggested_name).suffix.lower() != '.md':
+            raise RuntimeError(f'官方导出不是 Markdown 文件：{suggested_name}')
+
+        download.save_as(str(temporary))
+        size = temporary.stat().st_size
+        if size == 0:
+            raise RuntimeError('官方导出的 Markdown 文件为空')
+        temporary.replace(target)
+        page.wait_for_timeout(200)
+        page.keyboard.press('Escape')
+        LOG.info('已保存官方导出说明.md（%d bytes，原文件名：%s）', size, suggested_name)
+        return target
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def download_attachments(page, body, folder):

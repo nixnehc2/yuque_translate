@@ -1,8 +1,6 @@
-# 语雀组会资料下载器 V1
+# 语雀组会资料下载器 V2
 
-Python + Playwright，同步串行下载。读取真实知识库目录，点击附件的真实下载按钮，通过 `expect_download()` 保存文件；不调用语雀私有 API，不解析 CDN 下载链接。
-
-V1 的边界：能访问语雀、遍历目录、保存 Markdown，并下载带真实下载按钮的附件；部分旧 PDF 卡片在页面上没有下载按钮，V1 会记录失败并继续处理后续文档。
+Python + Playwright，同步串行下载。读取真实知识库目录；Markdown 使用语雀官方“导出 Markdown”流程生成；附件仍点击真实下载按钮并通过 `expect_download()` 保存。不调用语雀私有 API，不解析 CDN 下载链接。
 
 ## 安装
 
@@ -67,34 +65,35 @@ powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1 -Connect
 
 - 已存在的附件按文件名跳过，不校验远端更新；需要更新时先手动移走旧文件。
 - 下载先写 `.part`，成功后才改为最终文件名，失败时清理本次临时文件。
-- `说明.md` 每次覆盖，包含标题、原文 URL 和清理后的正文。附件卡片和预览 iframe 删除；正文图片保留远程链接，不另外下载图片。
-- 没有附件之外的正文时明确写“本页除附件外无正文”。PDF 内容不会被抽取成正文。
+- `说明.md` 每次覆盖，内容来自语雀官方 Markdown 导出，不再由页面 HTML 转换。
+- 官方导出文件名会记录到日志；本地统一保存为 `说明.md`，便于批量归档。
 - 某篇或某附件失败会记录到输出根目录 `failed.txt`，继续后续文档。该文件追加历史失败，重跑成功不会删除旧记录，以当前终端汇总为准。
 - 清晰日志同时写终端与项目的 `download.log`；正常完成退出码 0，有失败退出码 1，手动中止为 130。
 
 ## 文件与实现范围
 
 - `main.py`：参数、持久化浏览器、串行遍历、错误记录。
-- `yuque.py`：所有语雀 selector、虚拟目录滚动、附件下载、BeautifulSoup 清理和 markdownify 转换。
+- `yuque.py`：所有语雀 selector、虚拟目录滚动、附件下载和官方 Markdown 导出。
 - `requirements.txt`：测试环境的依赖版本。
 - `login_chrome.ps1`：本机首次手动登录的辅助入口。
 - `log-01.md`：第一版验收记录和已知边界。
+- `log-02.md`：第二版官方 Markdown 导出验证记录。
 
 目录 selector 来自 2026-09-21 对实际页面 DOM 的检查：`#navBox .lark-virtual-tree` 是虚拟目录，程序展开并逐屏滚动到底部；正文定位 `article#content .ne-viewer-body`；文件卡片通过 `ne-card-local-doc-*` 的 `data-testid` 定位。该站 DOM 变化时只需优先检查 `yuque.py`。
 
-已适配实际观察到的 `localdoc` 附件组件。发现其他未适配卡片时报告失败，避免静默漏下；不保证未测试的旧版附件组件通用。无权限文档无法下载。复杂正文排版按 markdownify 能力转换，不承诺与网页像素一致。
+已适配实际观察到的 `localdoc` 附件组件。发现其他未适配卡片时报告失败，避免静默漏下；不保证未测试的旧版附件组件通用。无权限文档无法下载。Markdown 的排版 fidelity 由语雀官方导出决定。
 
-已知限制：部分旧 PDF 附件卡片没有 `ne-card-local-doc-btn-download` 下载按钮，导致该附件无法通过真实按钮触发下载。此类文档仍会保存 `说明.md`，并写入 `failed.txt`。
+已知限制：部分旧 PDF 附件卡片没有 `ne-card-local-doc-btn-download` 下载按钮，导致该附件无法通过真实按钮触发下载。此类文档仍会完成官方 Markdown 导出，并写入 `failed.txt`。
 
 没有数据库、state.json、并发、API Token、GUI、Web UI 或 LLM 功能。`.browser-profile` 包含登录信息，已加入 `.gitignore`，不要分享该目录。
 
 ## 本次验收（2026-09-21）
 
-实际知识库目录采集 199 篇。前 10 篇冒烟验收全部成功，保存 11 个附件（10 PDF + 1 PPTX）和 10 份说明。随后全量运行：101 篇文档无错误完成，98 篇因至少一个附件失败而标记失败；199 份 `说明.md` 均已保存，95 个附件新下载，11 个附件因已存在跳过。失败附件主要为没有下载按钮的旧 PDF 卡片。
+V1 曾全量采集 199 篇目录，并由页面 HTML 生成 199 份 Markdown；101 篇文档无错误完成，98 篇因附件失败标记失败。V2 已改用官方导出，并在 3 篇文档上验证导出链路；另用主程序处理目录前 2 篇，2 篇官方 Markdown、2 个附件均成功，退出码 0。
 
-详细记录见 `log-01.md`。`failed.txt` 保留了开发期间原生浏览器崩溃和已修复卡片误报的历史记录；它不是当前未完成清单。
+详细记录见 `log-01.md` 和 `log-02.md`。`failed.txt` 保留了开发期间原生浏览器崩溃和已修复卡片误报的历史记录；它不是当前未完成清单。
 
-正文清理、相对链接、图片链接、段落保留及覆盖写入的回归检查：
+文件名处理和知识库 URL 校验的回归检查：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest -v
