@@ -7,7 +7,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
-from yuque import TREE, Document, get_document_list, library_url, load_document, safe_name, download_attachments, export_markdown
+from yuque import TREE, Document, get_document_list, library_url, load_document, safe_name, download_attachments, export_markdown, download_markdown_attachments
 
 ROOT = Path(__file__).resolve().parent
 
@@ -18,6 +18,7 @@ def main():
             stream.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('url', nargs='?', help='组会报告知识库 URL 或库内文档 URL')
+    parser.add_argument('--markdown', type=Path, help='从已导出的 Markdown 提取并下载语雀附件')
     parser.add_argument('--output', type=Path, default=Path(r'E:\FML'))
     parser.add_argument('--limit', type=int, help='只处理目录前 N 篇；不指定则全量')
     parser.add_argument('--list-only', action='store_true', help='仅获取并打印完整目录')
@@ -26,9 +27,40 @@ def main():
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error('--limit 必须大于 0')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S', handlers=[logging.StreamHandler(), logging.FileHandler(ROOT / 'download.log', encoding='utf-8')])
+
+    if args.markdown:
+        if args.url:
+            parser.error('--markdown 模式不能同时传入知识库 URL')
+        if args.list_only:
+            parser.error('--list-only 只适用于知识库目录模式')
+
+        with sync_playwright() as playwright:
+            if args.connect:
+                if args.connect not in ('http://127.0.0.1:9223', 'http://localhost:9223'):
+                    raise ValueError('--connect 仅接受本机 9223 端口')
+                browser = playwright.chromium.connect_over_cdp(args.connect)
+                context = browser.contexts[0]
+            else:
+                context = playwright.chromium.launch_persistent_context(
+                    str(ROOT / '.browser-profile'),
+                    channel='chrome',
+                    headless=False,
+                    accept_downloads=True,
+                    viewport={'width': 1360, 'height': 900},
+                )
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                total, downloaded, failed = download_markdown_attachments(page, args.markdown)
+                return 1 if failed else 0
+            finally:
+                if args.connect:
+                    browser.close()
+                else:
+                    context.close()
+
     url = args.url or input('请输入组会报告知识库 URL：').strip()
     library_url(url)
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S', handlers=[logging.StreamHandler(), logging.FileHandler(ROOT / 'download.log', encoding='utf-8')])
     with sync_playwright() as p:
         if args.connect:
             if args.connect not in ('http://127.0.0.1:9223', 'http://localhost:9223'):

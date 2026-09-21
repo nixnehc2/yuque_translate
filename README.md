@@ -48,6 +48,18 @@ powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1 -Connect
 
 也可以不传 URL，程序会在终端询问。接受知识库 URL 或库内文档 URL，始终处理所属知识库目录中的文档，不跟随正文中的外部文档链接。
 
+### 从已导出 Markdown 下载附件
+
+`--markdown` 模式读取单个已导出的 Markdown 文件，提取其中所有语雀附件链接，并把附件下载到该 Markdown 所在目录。链接先解析标准 `[文件名](URL)`，再做全文 URL 兜底扫描；按 URL 去重，优先使用 Markdown 中的文件名。本地同名文件不会被覆盖，会自动使用 `文件名_2.ext`、`文件名_3.ext` 等后缀。
+
+本机推荐配合项目专属 Chrome 的兼容模式使用：
+
+```powershell
+.\.venv\Scripts\python.exe main.py --markdown "E:\FML\某文档__slug\说明.md" --connect http://127.0.0.1:9223
+```
+
+该模式不使用 `requests`，而是让已登录浏览器直接访问附件 URL，并用 Playwright `expect_download()` 捕获下载；原 Markdown 文件不会被修改。单个附件失败会记录错误并继续处理后续附件，最后输出发现、成功和失败数量。
+
 ```powershell
 # 只检查全部文档标题与 URL，不下载
 .\.venv\Scripts\python.exe main.py "https://foundationml.yuque.com/foundationml/seminar" --list-only
@@ -73,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1 -Connect
 ## 文件与实现范围
 
 - `main.py`：参数、持久化浏览器、串行遍历、错误记录。
-- `yuque.py`：所有语雀 selector、虚拟目录滚动、附件下载和官方 Markdown 导出。
+- `yuque.py`：所有语雀 selector、虚拟目录滚动、附件下载、Markdown 链接提取和官方 Markdown 导出。
 - `requirements.txt`：测试环境的依赖版本。
 - `login_chrome.ps1`：本机首次手动登录的辅助入口。
 - `log-01.md`：第一版验收记录和已知边界。

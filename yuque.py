@@ -3,7 +3,9 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
+
+from playwright.sync_api import Error as PlaywrightError
 
 LOG = logging.getLogger(__name__)
 # 2026-09-21 在 foundationml.yuque.com 的组会报告页面实际检查。
@@ -21,12 +23,21 @@ RIGHTBOARD = 'svg[data-name="Rightboard"]'
 EXPORT_MENU_TEXT = '导出...'
 MARKDOWN_ITEM = '[data-testid="fileTypeSelectorItem-markdown"]'
 FINAL_EXPORT_BUTTON = 'button.ant-btn-primary'
+ATTACHMENT_PATH = '/attachments/yuque/'
+MARKDOWN_ATTACHMENT_LINK = re.compile(r'\[([^\]]+)\]\(\s*(https?://[^\s)]+?)\s*\)')
+RAW_ATTACHMENT_URL = re.compile(r'https?://[^\s<>"\')\]]+', re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class Document:
     title: str
     url: str
+
+
+@dataclass(frozen=True)
+class MarkdownAttachment:
+    url: str
+    filename: str
 
 
 def library_url(url):
@@ -48,6 +59,78 @@ def safe_name(text, limit=140):
 def attachment_name(text):
     suffix = Path(text.strip()).suffix
     return safe_name(Path(text.strip()).stem, 110) + safe_name(suffix, 20) if suffix else safe_name(text, 130)
+
+
+def url_attachment_name(url):
+    name = Path(unquote(urlsplit(url).path)).name
+    return safe_name(name) if name else 'attachment'
+
+
+def is_yuque_attachment_url(url):
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme in {'http', 'https'}
+        and (parsed.hostname == 'yuque.com' or (parsed.hostname or '').endswith('.yuque.com'))
+        and ATTACHMENT_PATH in parsed.path
+    )
+
+
+def extract_attachments(md_path):
+    """从 Markdown 中提取语雀附件，按 URL 去重并优先使用链接文件名。"""
+    text = Path(md_path).read_text(encoding='utf-8-sig')
+    attachments = {}
+    for filename, url in MARKDOWN_ATTACHMENT_LINK.findall(text):
+        url = url.strip()
+        if is_yuque_attachment_url(url) and url not in attachments:
+            attachments[url] = MarkdownAttachment(url, safe_name(filename.strip() or url_attachment_name(url)))
+    for match in RAW_ATTACHMENT_URL.finditer(text):
+        url = match.group(0).rstrip('.,;:!?')
+        if is_yuque_attachment_url(url) and url not in attachments:
+            attachments[url] = MarkdownAttachment(url, url_attachment_name(url))
+    return list(attachments.values())
+
+
+def unique_attachment_path(folder, filename):
+    candidate = folder / filename
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    number = 2
+    while candidate.exists():
+        candidate = folder / f'{stem}_{number}{suffix}'
+        number += 1
+    return candidate
+
+
+def download_markdown_attachments(page, md_path):
+    """用已登录浏览器下载 Markdown 中的语雀附件。"""
+    attachments = extract_attachments(md_path)
+    folder = Path(md_path).resolve().parent
+    downloaded = failed = 0
+    for index, attachment in enumerate(attachments, 1):
+        target = unique_attachment_path(folder, attachment.filename)
+        temporary = target.with_name(target.name + '.part')
+        try:
+            with page.expect_download(timeout=120000) as event:
+                try:
+                    page.goto(attachment.url, wait_until='commit', timeout=60000)
+                except PlaywrightError as exc:
+                    if 'Download is starting' not in str(exc):
+                        raise
+            download = event.value
+            download.save_as(str(temporary))
+            if temporary.stat().st_size == 0:
+                raise RuntimeError('下载文件为空')
+            temporary.replace(target)
+            downloaded += 1
+            LOG.info('已下载 Markdown 附件 [%d/%d]：%s（%d bytes）', index, len(attachments), target.name, target.stat().st_size)
+        except Exception as exc:
+            failed += 1
+            temporary.unlink(missing_ok=True)
+            LOG.error('Markdown 附件下载失败 [%d/%d]：%s：%s', index, len(attachments), attachment.url, exc)
+    LOG.info('发现 %d 个附件，成功下载 %d 个，失败 %d 个。', len(attachments), downloaded, failed)
+    return len(attachments), downloaded, failed
 
 
 def get_document_list(page, url):
