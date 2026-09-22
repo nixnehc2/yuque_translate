@@ -1,6 +1,6 @@
 # 语雀组会资料下载器 V2
 
-Python + Playwright，同步串行下载。读取真实知识库目录；Markdown 使用语雀官方“导出 Markdown”流程生成；附件仍点击真实下载按钮并通过 `expect_download()` 保存。不调用语雀私有 API，不解析 CDN 下载链接。
+Python + Playwright，同步串行下载。读取真实知识库目录；Markdown 使用语雀官方“导出 Markdown”流程生成；附件从官方导出的 Markdown 中解析语雀链接，并用已登录浏览器直接访问链接捕获下载。不调用语雀私有 API，不解析 CDN 下载链接。
 
 ## 安装
 
@@ -29,13 +29,13 @@ powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1
 
 本机 Chrome 153 使用 `launch_persistent_context()` 能复用登录、读取目录，但下载时会发生原生崩溃（`0xC0000005`），本地纯文本下载也复现。不要将这一模式的下载视为已通过验证。Playwright 上游有[类似持久化配置下载崩溃报告](https://github.com/microsoft/playwright/issues/42506)，但其环境不同，不能据此认定根因相同。
 
-本机请使用以下**兼容命令**。依然复用同一个磁盘配置目录，文件下载仍是 Playwright 的 `expect_download()` 加真实按钮点击；区别仅在于 Chrome 正常启动后通过 CDP 连接，而非 `launch_persistent_context()` 启动：
+本机请使用以下**兼容命令**。依然复用同一个磁盘配置目录，文件下载仍是 Playwright 的 `expect_download()` 捕获浏览器下载；区别仅在于 Chrome 正常启动后通过 CDP 连接，而非 `launch_persistent_context()` 启动：
 
 ```powershell
 # 没有项目专属 Chrome 窗口时先启动一次，保持窗口打开
 powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1 -Connect
 
-.\.venv\Scripts\python.exe main.py "https://foundationml.yuque.com/foundationml/seminar" --limit 10 --connect http://127.0.0.1:9223
+.\.venv\Scripts\python.exe main.py "https://foundationml.yuque.com/foundationml/seminar"  --connect http://127.0.0.1:9223
 ```
 
 兼容模式仅监听本机 9223，不连接日常 Chrome。程序完成后会断开连接，窗口可继续复用；不用时正常关闭专属 Chrome。不要同时开启默认模式和兼容模式占用同一个目录。
@@ -85,17 +85,15 @@ powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1 -Connect
 ## 文件与实现范围
 
 - `main.py`：参数、持久化浏览器、串行遍历、错误记录。
-- `yuque.py`：所有语雀 selector、虚拟目录滚动、附件下载、Markdown 链接提取和官方 Markdown 导出。
+- `yuque.py`：所有语雀 selector、虚拟目录滚动、Markdown 附件链接提取、直接下载和官方 Markdown 导出。
 - `requirements.txt`：测试环境的依赖版本。
 - `login_chrome.ps1`：本机首次手动登录的辅助入口。
 - `log-01.md`：第一版验收记录和已知边界。
 - `log-02.md`：第二版官方 Markdown 导出验证记录。
 
-目录 selector 来自 2026-09-21 对实际页面 DOM 的检查：`#navBox .lark-virtual-tree` 是虚拟目录，程序展开并逐屏滚动到底部；正文定位 `article#content .ne-viewer-body`；文件卡片通过 `ne-card-local-doc-*` 的 `data-testid` 定位。该站 DOM 变化时只需优先检查 `yuque.py`。
+目录 selector 来自 2026-09-22 对实际页面 DOM 的检查：`#navBox .lark-virtual-tree` 是虚拟目录，程序展开并逐屏滚动到底部；正文定位 `article#content .ne-viewer-body`。该站 DOM 变化时只需优先检查 `yuque.py`。
 
-已适配实际观察到的 `localdoc` 附件组件。发现其他未适配卡片时报告失败，避免静默漏下；不保证未测试的旧版附件组件通用。无权限文档无法下载。Markdown 的排版 fidelity 由语雀官方导出决定。
-
-已知限制：部分旧 PDF 附件卡片没有 `ne-card-local-doc-btn-download` 下载按钮，导致该附件无法通过真实按钮触发下载。此类文档仍会完成官方 Markdown 导出，并写入 `failed.txt`。
+附件下载不再依赖正文里的附件卡片和下载按钮，因此不受旧版卡片 DOM 差异影响。若官方 Markdown 中没有附件链接、链接失效或无权限，该附件会失败并写入 `failed.txt`。Markdown 的排版 fidelity 由语雀官方导出决定。
 
 没有数据库、state.json、并发、API Token、GUI、Web UI 或 LLM 功能。`.browser-profile` 包含登录信息，已加入 `.gitignore`，不要分享该目录。
 

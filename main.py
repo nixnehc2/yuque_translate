@@ -7,7 +7,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
-from yuque import TREE, Document, get_document_list, library_url, load_document, safe_name, download_attachments, export_markdown, download_markdown_attachments
+from yuque import TREE, Document, get_document_list, library_url, load_document, safe_name, export_markdown, download_markdown_attachments
 
 ROOT = Path(__file__).resolve().parent
 
@@ -51,7 +51,7 @@ def main():
                 )
             try:
                 page = context.pages[0] if context.pages else context.new_page()
-                total, downloaded, failed = download_markdown_attachments(page, args.markdown)
+                total, downloaded, failed, skipped = download_markdown_attachments(page, args.markdown)
                 return 1 if failed else 0
             finally:
                 if args.connect:
@@ -93,14 +93,18 @@ def main():
                 try:
                     folder = args.output / (safe_name(document.title) + '__' + document.url.rsplit('/', 1)[-1])
                     folder.mkdir(parents=True, exist_ok=True)
-                    body = load_document(page, document)
-                    new, old, errors = download_attachments(page, body, folder)
+                    load_document(page, document)
+                    markdown_path = export_markdown(page, document, folder)
+                    total, new, attachment_failures, old = download_markdown_attachments(
+                        page,
+                        markdown_path,
+                        skip_existing=True,
+                    )
                     downloaded += new
                     skipped += old
-                    export_markdown(page, document, folder)
                     exported += 1
-                    if errors:
-                        raise RuntimeError('; '.join(errors))
+                    if attachment_failures:
+                        raise RuntimeError(f'{attachment_failures} 个 Markdown 附件下载失败')
                     good += 1
                 except Exception as exc:
                     failed += 1

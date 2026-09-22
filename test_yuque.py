@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from yuque import extract_attachments, unique_attachment_path, safe_name, attachment_name, library_url
+from yuque import extract_attachments, unique_attachment_path, safe_name, attachment_name, library_url, download_markdown_attachments
 
 
 class UtilityTests(unittest.TestCase):
@@ -43,3 +43,16 @@ class MarkdownAttachmentTests(unittest.TestCase):
 
             self.assertEqual(unique_attachment_path(base, 'paper.pdf'), base / 'paper_3.pdf')
             self.assertEqual(unique_attachment_path(base, 'notes.md'), base / 'notes.md')
+
+    def test_download_markdown_attachments_skips_existing_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / '说明.md'
+            path.write_text(
+                '[Paper.pdf](https://foundationml.yuque.com/attachments/yuque/0/2020/pdf/a/paper.pdf)',
+                encoding='utf-8',
+            )
+            (Path(folder) / 'Paper.pdf').write_bytes(b'existing')
+
+            result = download_markdown_attachments(object(), path, skip_existing=True)
+
+            self.assertEqual(result, (1, 0, 0, 1))

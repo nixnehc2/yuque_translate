@@ -15,10 +15,6 @@ TREE_LINK = 'a[href]'
 ROW = '[data-rbd-draggable-id]'
 TITLE = '#article-title'
 BODY = 'article#content .ne-viewer-body'
-CARD = 'ne-card'
-FILE_CARD = '[data-testid="ne-card-local-doc-viewer"]'
-FILE_TITLE = '[data-testid="ne-card-local-doc-title"]'
-DOWNLOAD = '[data-testid="ne-card-local-doc-btn-download"]'
 RIGHTBOARD = 'svg[data-name="Rightboard"]'
 EXPORT_MENU_TEXT = '导出...'
 MARKDOWN_ITEM = '[data-testid="fileTypeSelectorItem-markdown"]'
@@ -103,13 +99,21 @@ def unique_attachment_path(folder, filename):
     return candidate
 
 
-def download_markdown_attachments(page, md_path):
+def download_markdown_attachments(page, md_path, skip_existing=False):
     """用已登录浏览器下载 Markdown 中的语雀附件。"""
     attachments = extract_attachments(md_path)
     folder = Path(md_path).resolve().parent
-    downloaded = failed = 0
+    downloaded = failed = skipped = 0
+    used_names = set()
     for index, attachment in enumerate(attachments, 1):
+        filename = attachment.filename.casefold()
+        if skip_existing and filename not in used_names and (folder / attachment.filename).is_file():
+            skipped += 1
+            used_names.add(filename)
+            LOG.info('跳过已有附件：%s', attachment.filename)
+            continue
         target = unique_attachment_path(folder, attachment.filename)
+        used_names.add(target.name.casefold())
         temporary = target.with_name(target.name + '.part')
         try:
             with page.expect_download(timeout=120000) as event:
@@ -129,8 +133,8 @@ def download_markdown_attachments(page, md_path):
             failed += 1
             temporary.unlink(missing_ok=True)
             LOG.error('Markdown 附件下载失败 [%d/%d]：%s：%s', index, len(attachments), attachment.url, exc)
-    LOG.info('发现 %d 个附件，成功下载 %d 个，失败 %d 个。', len(attachments), downloaded, failed)
-    return len(attachments), downloaded, failed
+    LOG.info('发现 %d 个附件，成功下载 %d 个，失败 %d 个，已有跳过 %d 个。', len(attachments), downloaded, failed, skipped)
+    return len(attachments), downloaded, failed, skipped
 
 
 def get_document_list(page, url):
@@ -236,50 +240,3 @@ def export_markdown(page, document, folder):
         return target
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def download_attachments(page, body, folder):
-    downloaded = skipped = 0
-    errors = []
-    # 未识别的附件类型不能默默当作没有附件。
-    kinds = body.locator(CARD).evaluate_all('(es)=>es.map(e=>e.getAttribute("data-card-name"))')
-    unknown = set(kinds) - {'localdoc', 'bookmarkInline', 'image', 'table', 'codeblock', 'hr', 'math', 'link', None}
-    if unknown:
-        errors.append('发现尚未适配的卡片类型：' + ', '.join(sorted(unknown)))
-    cards = body.locator(FILE_CARD)
-    LOG.info('附件：%d 个', cards.count())
-    used_names = {'说明.md'}
-    for index in range(cards.count()):
-        card = cards.nth(index)
-        try:
-            raw = card.locator(FILE_TITLE).inner_text(timeout=15000)
-            name = attachment_name(raw)
-            number = 2
-            original = Path(name)
-            while name.casefold() in used_names:
-                name = f'{original.stem}__{number}{original.suffix}'
-                number += 1
-            used_names.add(name.casefold())
-            target = folder / name
-            if target.is_file():
-                skipped += 1
-                LOG.info('跳过已有附件：%s', name)
-                continue
-            LOG.info('下载 [%d/%d]：%s', index + 1, cards.count(), name)
-            with page.expect_download(timeout=60000) as event:
-                card.locator(DOWNLOAD).click(timeout=15000)
-            download = event.value
-            temporary = folder / (name + '.part')
-            try:
-                download.save_as(str(temporary))
-                if temporary.stat().st_size == 0:
-                    raise RuntimeError('下载文件为空')
-                temporary.replace(target)
-            finally:
-                temporary.unlink(missing_ok=True)
-            downloaded += 1
-            LOG.info('已保存：%s（%d bytes）', name, target.stat().st_size)
-        except Exception as exc:
-            LOG.error('附件 %d 失败：%s', index + 1, exc)
-            errors.append(f'附件 {index + 1}: {exc}')
-    return downloaded, skipped, errors
