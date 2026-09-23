@@ -60,6 +60,16 @@ powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1 -Connect
 
 该模式不使用 `requests`，而是让已登录浏览器直接访问附件 URL，并用 Playwright `expect_download()` 捕获下载；原 Markdown 文件不会被修改。单个附件失败会记录错误并继续处理后续附件，最后输出发现、成功和失败数量。
 
+### 单独导出评论
+
+如果正文和附件已经下载完成，可以单独运行 `export_comments.py`。它会遍历输出根目录下形如 `<标题>__<slug>` 的文档目录，逐篇打开原文档读取页面评论区，并在同目录保存 `评论.md`；不会重新下载正文和附件。已有 `评论.md` 默认跳过，加 `--overwrite` 才覆盖：
+
+```powershell
+.\.venv\Scripts\python.exe export_comments.py --connect http://127.0.0.1:9223
+```
+
+常用参数：`--only "2023-09-06 郑钦城"` 只处理目录名匹配的文档，`--limit 10` 控制数量，`--overwrite` 覆盖已生成文件。日志写入项目 `export_comments.log`，失败记录追加到输出根目录 `comments_failed.txt`。
+
 ```powershell
 # 只检查全部文档标题与 URL，不下载
 .\.venv\Scripts\python.exe main.py "https://foundationml.yuque.com/foundationml/seminar" --list-only
@@ -85,6 +95,7 @@ powershell -ExecutionPolicy Bypass -File .\login_chrome.ps1 -Connect
 ## 文件与实现范围
 
 - `main.py`：参数、持久化浏览器、串行遍历、错误记录。
+- `export_comments.py`：单独遍历已下载目录并导出每篇文档评论。
 - `yuque.py`：所有语雀 selector、虚拟目录滚动、Markdown 附件链接提取、直接下载和官方 Markdown 导出。
 - `requirements.txt`：测试环境的依赖版本。
 - `login_chrome.ps1`：本机首次手动登录的辅助入口。
